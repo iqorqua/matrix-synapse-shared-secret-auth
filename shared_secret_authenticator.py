@@ -19,6 +19,10 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 from typing import Awaitable, Callable, Optional, Tuple
+from synapse.types import UserID
+from typing import (
+    Iterable
+)
 
 import hashlib
 import hmac
@@ -26,8 +30,11 @@ import logging
 
 import synapse
 from synapse import module_api
+from functools import wraps
+from synapse.handlers import auth
 
 logger = logging.getLogger(__name__)
+auth_type_name = 'm.shared_secret_auth'
 
 class SharedSecretAuthProvider:
     def __init__(self, config: dict, api: module_api):
@@ -36,14 +43,14 @@ class SharedSecretAuthProvider:
                 raise KeyError('Required `{0}` configuration key not found'.format(k))
 
         m_login_password_support_enabled = bool(config['m_login_password_support_enabled']) if 'm_login_password_support_enabled' in config else False
-        com_devture_shared_secret_auth_support_enabled = bool(config['com_devture_shared_secret_auth_support_enabled']) if 'com_devture_shared_secret_auth_support_enabled' in config else True
+        shared_secret_auth_support_enabled = bool(config['shared_secret_auth_support_enabled']) if 'shared_secret_auth_support_enabled' in config else True
 
         self.api = api
         self.shared_secret = config['shared_secret']
 
         auth_checkers: Optional[Dict[Tuple[str, Tuple], CHECK_AUTH_CALLBACK]] = {}
-        if com_devture_shared_secret_auth_support_enabled:
-            auth_checkers[("com.devture.shared_secret_auth", ("token",))] = self.check_com_devture_shared_secret_auth
+        if shared_secret_auth_support_enabled:
+            auth_checkers[(auth_type_name, ("token",))] = self.check_shared_secret_auth
         if m_login_password_support_enabled:
             auth_checkers[("m.login.password", ("password",))] = self.check_m_login_password
 
@@ -58,7 +65,7 @@ class SharedSecretAuthProvider:
             auth_checkers=auth_checkers,
         )
 
-    async def check_com_devture_shared_secret_auth(
+    async def check_shared_secret_auth(
         self,
         username: str,
         login_type: str,
@@ -69,9 +76,9 @@ class SharedSecretAuthProvider:
             Optional[Callable[["synapse.module_api.LoginResponse"], Awaitable[None]]],
         ]
     ]:
-        if login_type != "com.devture.shared_secret_auth":
+        if login_type != auth_type_name:
             return None
-        return await self._log_in_username_with_token("com.devture.shared_secret_auth", username, login_dict.get("token"))
+        return await self._log_in_username_with_token(auth_type_name, username, login_dict.get("token"))
 
     async def check_m_login_password(
         self,
@@ -121,3 +128,16 @@ class SharedSecretAuthProvider:
         logger.info('Authenticated user: %s', full_user_id)
 
         return full_user_id, None
+
+        
+_get_available_ui_auth_types = auth.AuthHandler._get_available_ui_auth_types
+
+async def _get_available_ui_auth_types_wrapper(self, user: UserID) -> Iterable[str]:
+    ui_auth_types = await _get_available_ui_auth_types.__get__(self, type(self))(user) 
+    # Remove out shared secred auth type from availible UI auth types
+    ui_auth_types.discard(auth_type_name)
+    return ui_auth_types
+
+_get_available_ui_auth_types_wrapper.__name__ = _get_available_ui_auth_types.__name__
+
+auth.AuthHandler._get_available_ui_auth_types = _get_available_ui_auth_types_wrapper

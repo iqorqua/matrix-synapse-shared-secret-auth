@@ -30,7 +30,6 @@ import logging
 
 import synapse
 from synapse import module_api
-from functools import wraps
 from synapse.handlers import auth
 
 logger = logging.getLogger(__name__)
